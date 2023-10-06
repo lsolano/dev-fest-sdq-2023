@@ -1,5 +1,6 @@
 using AirBnB.DevFest23.Domain.Infrastructure;
 using AirBnB.DevFest23.Domain.Models;
+using Optional;
 
 namespace AirBnB.DevFest23.Domain.Commands;
 
@@ -14,24 +15,36 @@ public sealed record class RegisterReservationArgs
 }
 
 
-public sealed class RegisterReservation : ICommand<RegisterReservationArgs, Guid>
+public sealed class RegisterReservation : ICommand<RegisterReservationArgs, Option<Guid>>
 {
     private readonly IReservationRepository _reservationRepository;
+    private readonly IPropertyRepository _propertyRepository;
 
     public RegisterReservation(
-        IReservationRepository reservationRepository)
+        IReservationRepository reservationRepository,
+        IPropertyRepository propertyRepository)
     {
+        ArgumentNullException.ThrowIfNull(reservationRepository);
+        ArgumentNullException.ThrowIfNull(propertyRepository);
+
         _reservationRepository = reservationRepository;
+        _propertyRepository = propertyRepository;
     }
-    
-    public Guid Execute(RegisterReservationArgs args)
+
+    public Option<Guid> Execute(RegisterReservationArgs args)
     {
-        return _reservationRepository.Persist(new Reservation
+        ArgumentNullException.ThrowIfNull(args);
+
+        Option<PropertyCapacityInfo> propertyInfoOption
+            = args.PropertyId.SomeWhen(id => Guid.Empty != id)
+                             .FlatMap(notEmptyId => _propertyRepository.Find(notEmptyId));
+
+        return propertyInfoOption.Map(propInfo => _reservationRepository.Persist(new()
         {
-            PropertyId = args.PropertyId,
+            PropertyId = propInfo.Id,
             Guests = args.TotalGuests,
             CheckIn = args.CheckInDate,
             CheckOut = args.CheckOutDate
-        });
+        }));
     }
 }
