@@ -39,16 +39,29 @@ public sealed class RegisterReservation : ICommand<RegisterReservationArgs, Opti
             = args.PropertyId.SomeWhen(id => Guid.Empty != id, $"Invalid PropertyId '{args.PropertyId}'.")
                              .FlatMap(notEmptyId => _propertyRepository.Find(notEmptyId), $"Property '{args.PropertyId}' not found.");
 
-        return propertyInfoOption.FlatMap(info => info.SomeWhen(i => 1 <= args.TotalGuests && args.TotalGuests <= i.MaxGuests,
-                                                                exception: $"Invalid number of guests, must be between 1 and {info.MaxGuests}."
-                                                               )
-                                                      .Map(propInfo => _reservationRepository.Persist(new()
-                                                      {
-                                                          PropertyId = propInfo.Id,
-                                                          Guests = args.TotalGuests,
-                                                          CheckIn = args.CheckInDate,
-                                                          CheckOut = args.CheckOutDate
-                                                      }))
-                                          );
+        return propertyInfoOption.FlatMap(info => ValidatePropertyRules(info, args)
+                                                  .Map(DoExecute(args)));
     }
+
+    private static Option<PropertyCapacityInfo, string> ValidatePropertyRules(PropertyCapacityInfo info, RegisterReservationArgs args)
+    {
+        return info.SomeWhen(i => 1 <= args.TotalGuests && args.TotalGuests <= i.MaxGuests,
+                             exception: $"Invalid number of guests, must be between 1 and {info.MaxGuests}.")
+                    .FlatMap(pi => pi.SomeWhen(_ => pi.Status == PropertyAvailability.Available,
+                                               exception: "Unable to create reservation for booked property."));
+    }
+
+    private Func<PropertyCapacityInfo, Guid> DoExecute(RegisterReservationArgs args)
+        => propInfo =>
+            {
+                _propertyRepository.UpdateStatus(propInfo.Id, PropertyAvailability.Booked);
+
+                return _reservationRepository.Persist(new()
+                {
+                    PropertyId = propInfo.Id,
+                    Guests = args.TotalGuests,
+                    CheckIn = args.CheckInDate,
+                    CheckOut = args.CheckOutDate
+                });
+            };
 }

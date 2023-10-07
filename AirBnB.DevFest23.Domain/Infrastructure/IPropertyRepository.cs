@@ -6,4 +6,6 @@ namespace AirBnB.DevFest23.Domain.Infrastructure;
 public interface IPropertyRepository
 {
     Option<PropertyCapacityInfo> Find(Guid id);
+
+    void UpdateStatus(Guid id, PropertyAvailability availability);
 }

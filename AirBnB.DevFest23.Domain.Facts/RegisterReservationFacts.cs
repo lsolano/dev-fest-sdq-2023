@@ -101,33 +101,6 @@ public static class RegisterReservationFacts
             reservationRepoMock.Verify(x => x.Persist(It.IsAny<Reservation>()), Times.Never);
         }
 
-        [Test]
-        public void With_Valid_Args_Returns_Infrastructure_Reservation_Id()
-        {
-            Guid expectedReservationId = Guid.NewGuid();
-
-            var reservationRepoMock = new Mock<IReservationRepository>();
-            reservationRepoMock.Setup(m => m.Persist(It.IsAny<Reservation>()))
-                               .Returns(expectedReservationId);
-            IReservationRepository reservationRepository = reservationRepoMock.Object;
-
-            var propertyRepositoryMock = new Mock<IPropertyRepository>();
-            propertyRepositoryMock.Setup(m => m.Find(It.IsAny<Guid>()))
-                                  .Returns(Option.Some(new PropertyCapacityInfo
-                                  {
-                                      Id = Guid.NewGuid(),
-                                      MaxGuests = 16
-                                  }));
-
-            ICommand<RegisterReservationArgs, Option<Guid, string>> sut
-                = new RegisterReservation(reservationRepository, propertyRepositoryMock.Object);
-
-            Option<Guid, string> reservationId = sut.Execute(Args);
-
-            reservationId.MatchNone(errorMessage => Assert.Fail($"Expected Guid, but found error message '{errorMessage}'"));
-            reservationId.ValueOrDefault().Should().Be(expectedReservationId);
-        }
-
         /*
         Boundary Value Analysis (BVA) & Equivalence Partitions (EP)
         With Allowed Guests between [1, 9]
@@ -158,17 +131,7 @@ public static class RegisterReservationFacts
                 MaxGuests = 9
             });
 
-            var reservationRepoMock = new Mock<IReservationRepository>();
-            reservationRepoMock.Setup(m => m.Persist(It.IsAny<Reservation>()))
-                               .Returns(expectedReservationId);
-            IReservationRepository reservationRepository = reservationRepoMock.Object;
-
-            var propertyRepositoryMock = new Mock<IPropertyRepository>();
-            propertyRepositoryMock.Setup(m => m.Find(It.IsAny<Guid>()))
-                                  .Returns(capacityInfoOption);
-
-            ICommand<RegisterReservationArgs, Option<Guid, string>> sut
-                = new RegisterReservation(reservationRepository, propertyRepositoryMock.Object);
+            ICommand<RegisterReservationArgs, Option<Guid, string>> sut = BuildSutWithSimpleMocks(expectedReservationId, capacityInfoOption);
 
             Option<Guid, string> reservationId = sut.Execute(Args with { TotalGuests = guests });
 
@@ -183,20 +146,10 @@ public static class RegisterReservationFacts
             Option<PropertyCapacityInfo> capacityInfoOption = Option.Some(new PropertyCapacityInfo
             {
                 Id = Guid.NewGuid(),
-                MaxGuests = 9
+                MaxGuests = 9, 
             });
 
-            var reservationRepoMock = new Mock<IReservationRepository>();
-            reservationRepoMock.Setup(m => m.Persist(It.IsAny<Reservation>()))
-                               .Returns(expectedReservationId);
-            IReservationRepository reservationRepository = reservationRepoMock.Object;
-
-            var propertyRepositoryMock = new Mock<IPropertyRepository>();
-            propertyRepositoryMock.Setup(m => m.Find(It.IsAny<Guid>()))
-                                  .Returns(capacityInfoOption);
-
-            ICommand<RegisterReservationArgs, Option<Guid, string>> sut
-                = new RegisterReservation(reservationRepository, propertyRepositoryMock.Object);
+            ICommand<RegisterReservationArgs, Option<Guid, string>> sut = BuildSutWithSimpleMocks(expectedReservationId, capacityInfoOption);
 
             Option<Guid, string> reservationId = sut.Execute(Args with { TotalGuests = guests });
 
@@ -207,7 +160,83 @@ public static class RegisterReservationFacts
 
         /*
         Trivia: try to add a new test case to force an optimization over Execute()
+            -> Do not call Infra Layer if Args.TotalGuests is less than 1
         */
+
+        /*
+            State Diagrams
+            1. With Available property Works => Updates property status to booked
+            2. With Booked property => Option.None<Guid, String>("Unable to create reservation for booked property.")
+
+                (*) ---> (Available) ---- RegisterReservation ---> (Booked)
+                            ^                                           |
+                            |                                           |
+                            |-------------CancelReservation-------------|
+        */
+
+        [Test]
+        public void With_Booked_Property_Returns_None_And_ErrorMessage()
+        {
+            Guid expectedReservationId = Guid.NewGuid();
+            Option<PropertyCapacityInfo> capacityInfoOption = Option.Some(new PropertyCapacityInfo
+            {
+                Id = Guid.NewGuid(),
+                MaxGuests = 9,
+                Status = PropertyAvailability.Booked
+            });
+
+            ICommand<RegisterReservationArgs, Option<Guid, string>> sut = BuildSutWithSimpleMocks(expectedReservationId, capacityInfoOption);
+
+            Option<Guid, string> reservationId = sut.Execute(Args);
+
+            reservationId.MatchSome(id => Assert.Fail($"Expected error message, but found Guid '{id}'"));
+            reservationId.MatchNone(errorMessage => errorMessage.Should()
+                                                                .Be("Unable to create reservation for booked property."));
+        }
+
+        [Test]
+        public void With_Available_Property_Updates_Its_Status_To_Booked()
+        {
+            Guid expectedReservationId = Guid.NewGuid();
+            Guid propertyId = Guid.NewGuid();
+
+            Option<PropertyCapacityInfo> capacityInfoOption = Option.Some(new PropertyCapacityInfo
+            {
+                Id = propertyId,
+                MaxGuests = 9,
+                Status = PropertyAvailability.Available
+            });
+
+            var propertyRepoMock = new Mock<IPropertyRepository>();
+            ICommand<RegisterReservationArgs, Option<Guid, string>> sut 
+                = BuildSutWithSimpleMocks(expectedReservationId, capacityInfoOption, propertyRepoMock: propertyRepoMock);
+
+            _ = sut.Execute(Args with { PropertyId = propertyId });
+
+            propertyRepoMock.Verify(x => x.UpdateStatus(
+                It.Is<Guid>(id => id == propertyId), 
+                It.Is<PropertyAvailability>(s => s == PropertyAvailability.Booked)), Times.Once);
+            
+        }
+
+        //Homework: Add the CancelReservation command, be sure to include a guard for the only allowed transition there Booked -> Available
+
+        private static ICommand<RegisterReservationArgs, Option<Guid, string>> BuildSutWithSimpleMocks(
+            Guid expectedReservationId, 
+            Option<PropertyCapacityInfo> capacityInfoOption,
+            Mock<IReservationRepository>? reservationRepoMock = null,
+            Mock<IPropertyRepository>? propertyRepoMock = null)
+        {
+            var finalReservationMock = reservationRepoMock ?? new Mock<IReservationRepository>();
+            finalReservationMock.Setup(m => m.Persist(It.IsAny<Reservation>()))
+                               .Returns(expectedReservationId);
+
+            var finalPropertyRepositoryMock = propertyRepoMock ?? new Mock<IPropertyRepository>();
+            finalPropertyRepositoryMock.Setup(m => m.Find(It.IsAny<Guid>()))
+                                  .Returns(capacityInfoOption);
+
+            return new RegisterReservation(finalReservationMock.Object, finalPropertyRepositoryMock.Object);
+        }
     }
 
 }
