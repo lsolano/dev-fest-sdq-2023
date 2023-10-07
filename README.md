@@ -11,6 +11,9 @@
 2. [Moq](https://github.com/devlooped/moq/wiki/Quickstart) : Mocking / test doubles library
 3. [FluentAssertions](https://fluentassertions.com/introduction): Assertions library using Fluent APIs
 
+## Other Libraries
+1. [nlkl/Optional](nlkl/Optional): Option pattern implementation
+
 ## Design 
 Simplified [_Command and Query Responsibility Segregation_ (CQRS)](https://learn.microsoft.com/en-us/azure/architecture/patterns/cqrs) Implementation. No UI, no real Infrastructure layer (just Interfaces here). So we have Commands and Queries with business logic, when those need to communicate with external services such as Databases, they go to an Interface without implementation. 
 
