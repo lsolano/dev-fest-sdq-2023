@@ -7,4 +7,6 @@ public sealed record class PropertyCapacityInfo
     public required int MaxGuests { get; init; }
 
     public PropertyAvailability Status { get; init; } = PropertyAvailability.Available;
+    
+    public int Price { get; init; }
 }
